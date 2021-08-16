@@ -8,13 +8,21 @@ import (
 
 func TestTokens(t *testing.T) {
 	sess := New()
-	p := sess.newParser(strings.NewReader("echo $'This is a\\ntoken' and a few more\necho cmd2 ; echo cmd3\n\necho \"some text\""), "(test)")
+
+	tstStr := `echo $'This is a\ntoken' and a few more
+	echo cmd2 ; echo cmd3
+
+echo "some text"
+echo "Hello, "$'v = \033 \u24e'`
+
+	p := sess.newParser(strings.NewReader(tstStr), "(test)")
 
 	expect := []string{
 		"echo|This is a\ntoken|and|a|few|more",
 		"echo|cmd2",
 		"echo|cmd3",
 		"echo|some text",
+		"echo|Hello, v = \x1b \u024e",
 	}
 
 	for {
