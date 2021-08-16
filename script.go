@@ -87,7 +87,28 @@ func (p *parser) readToken() (Token, error) {
 			}
 			// haven't reached start of token yet, keep reading (and set line, col forward)
 			line, col = p.line, p.col
-			continue
+		case '\\':
+			// https://www.gnu.org/software/bash/manual/html_node/Escape-Character.html
+			// It preserves the literal value of the next character that follows, with the exception of newline
+			r, _, err := p.readRune()
+			if err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				return nil, err
+			}
+			if r == '\r' {
+				r, _, err = p.readRune()
+				if err != nil {
+					if err == io.EOF {
+						err = io.ErrUnexpectedEOF
+					}
+					return nil, err
+				}
+			}
+			if r != '\n' {
+				buf.WriteRune(r)
+			}
 		case '\'':
 			s, err := p.readSingleQuote(line, col)
 			if err != nil {
@@ -99,6 +120,7 @@ func (p *parser) readToken() (Token, error) {
 }
 
 func (p *parser) readSingleQuote(line, col int) (*stringElement, error) {
+	// https://www.gnu.org/software/bash/manual/html_node/Single-Quotes.html
 	// in single quotes, everything until the next singlequote is part of the string
 	buf := &bytes.Buffer{}
 	for {
