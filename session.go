@@ -24,14 +24,12 @@ func (s *Session) getCtx(ctx context.Context) *Context {
 }
 
 func (s *Session) Run(ctx context.Context, in io.Reader, filename string) error {
-	scr := &Script{Filename: filename}
-	return scr.run(s.getCtx(ctx), in)
+	return runScript(s.getCtx(ctx), in, filename)
 }
 
 func (s *Session) RunString(ctx context.Context, str string) error {
 	reader := strings.NewReader(str)
-	scr := &Script{Filename: "(inline)"}
-	return scr.run(s.getCtx(ctx), reader)
+	return runScript(s.getCtx(ctx), reader, "(inline)")
 }
 
 func (s *Session) RunFile(ctx context.Context, filename string) error {
@@ -39,8 +37,8 @@ func (s *Session) RunFile(ctx context.Context, filename string) error {
 	if err != nil {
 		return err
 	}
-	scr := &Script{Filename: filename}
-	return scr.run(s.getCtx(ctx), fp)
+	defer fp.Close()
+	return runScript(s.getCtx(ctx), fp, filename)
 }
 
 type Job struct {

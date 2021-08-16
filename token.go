@@ -7,14 +7,18 @@ type Element interface {
 	ToSource() string
 }
 
-type stringElement string
+type stringElement struct {
+	value     string
+	filename  string
+	line, col int
+}
 
 func (s stringElement) Resolve(ctx Context) (string, error) {
-	return string(s), nil
+	return s.value, nil
 }
 
 func (s stringElement) ToSource() string {
-	return Quote(string(s))
+	return Quote(s.value)
 }
 
 type varElement string
