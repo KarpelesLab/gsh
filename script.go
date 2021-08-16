@@ -16,23 +16,8 @@ type parser struct {
 	bio       *bufio.Reader
 }
 
-type command struct {
-	filename string
-	line     int
-}
-
 func runScript(ctx *Context, r io.Reader, filename string) error {
-	p := &parser{session: ctx.Session, line: 1}
-
-	// if v is already a bufio.Reader, use it as is
-	switch v := r.(type) {
-	case *bufio.Reader:
-		p.bio = v
-	default:
-		p.bio = bufio.NewReader(v)
-	}
-
-	return p.run()
+	return ctx.Session.newParser(r, filename).run()
 }
 
 func (p *parser) run() error {
@@ -50,6 +35,35 @@ func (p *parser) run() error {
 	return nil
 }
 
+func (p *parser) readCommand() (*command, error) {
+	cmd := &command{}
+
+	for {
+		tok, err := p.readToken()
+		if err != nil {
+			if err == io.EOF {
+				if len(cmd.tokens) > 0 {
+					return cmd, nil
+				}
+			}
+			return nil, err
+		}
+		if len(tok) == 0 {
+			continue
+		}
+		switch tok[len(tok)-1].(type) {
+		case newlineElement, semicolonElement:
+			if len(tok) > 1 {
+				// append if the end element was not alone, but skip end element
+				cmd.tokens = append(cmd.tokens, tok[:len(tok)-1])
+			}
+			return cmd, nil
+		default:
+			cmd.tokens = append(cmd.tokens, tok)
+		}
+	}
+}
+
 func (p *parser) readToken() (Token, error) {
 	t := Token{}
 	buf := &bytes.Buffer{}
@@ -59,8 +73,12 @@ func (p *parser) readToken() (Token, error) {
 		r, _, err := p.readRune()
 		if err != nil {
 			if err == io.EOF {
-				if len(t) == 0 {
-					return nil, io.EOF
+				if buf.Len() > 0 {
+					s := stringElement{value: buf.String(), filename: p.filename, line: line, col: col}
+					t = append(t, s)
+				}
+				if len(t) > 0 {
+					return t, nil
 				}
 			}
 			return nil, err
@@ -76,17 +94,24 @@ func (p *parser) readToken() (Token, error) {
 			// flush buf if not empty
 			s := stringElement{value: buf.String(), filename: p.filename, line: line, col: col}
 			t = append(t, s)
-			// reset line, col
+			// reset
+			buf = &bytes.Buffer{}
 			line, col = p.line, p.col
 		}
 
 		switch r {
-		case ' ', '\t', '\r', '\n':
+		case ' ', '\t', '\r':
 			if len(t) > 0 {
 				return t, nil
 			}
 			// haven't reached start of token yet, keep reading (and set line, col forward)
 			line, col = p.line, p.col
+		case '\n':
+			t = append(t, newlineElement{})
+			return t, nil
+		case ';':
+			t = append(t, semicolonElement{})
+			return t, nil
 		case '\\':
 			// https://www.gnu.org/software/bash/manual/html_node/Escape-Character.html
 			// It preserves the literal value of the next character that follows, with the exception of newline
@@ -119,7 +144,7 @@ func (p *parser) readToken() (Token, error) {
 	}
 }
 
-func (p *parser) readSingleQuote(line, col int) (*stringElement, error) {
+func (p *parser) readSingleQuote(line, col int) (stringElement, error) {
 	// https://www.gnu.org/software/bash/manual/html_node/Single-Quotes.html
 	// in single quotes, everything until the next singlequote is part of the string
 	buf := &bytes.Buffer{}
@@ -127,16 +152,16 @@ func (p *parser) readSingleQuote(line, col int) (*stringElement, error) {
 		b, err := p.readByte()
 		if err != nil {
 			if err == io.EOF {
-				return nil, io.ErrUnexpectedEOF
+				return stringElement{}, io.ErrUnexpectedEOF
 			}
-			return nil, err
+			return stringElement{}, err
 		}
 		if b != '\'' {
 			buf.WriteByte(b)
 			continue
 		}
 		// end of string
-		return &stringElement{value: buf.String(), filename: p.filename, line: line, col: col}, nil
+		return stringElement{value: buf.String(), filename: p.filename, line: line, col: col}, nil
 	}
 }
 

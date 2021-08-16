@@ -1,6 +1,7 @@
 package gsh
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"os"
@@ -9,6 +10,12 @@ import (
 
 type Session struct {
 	Location
+}
+
+func New() *Session {
+	return &Session{
+		Location: ProcLocation(),
+	}
 }
 
 func (s *Session) getCtx(ctx context.Context) *Context {
@@ -21,6 +28,18 @@ func (s *Session) getCtx(ctx context.Context) *Context {
 		}
 	}
 	return &Context{Context: ctx, Session: s}
+}
+
+func (s *Session) newParser(r io.Reader, filename string) *parser {
+	p := &parser{session: s, line: 1, col: 1, filename: filename}
+	// if v is already a bufio.Reader, use it as is
+	switch v := r.(type) {
+	case *bufio.Reader:
+		p.bio = v
+	default:
+		p.bio = bufio.NewReader(v)
+	}
+	return p
 }
 
 func (s *Session) Run(ctx context.Context, in io.Reader, filename string) error {
