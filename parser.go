@@ -140,6 +140,31 @@ func (p *parser) readToken() (Token, error) {
 				return nil, err
 			}
 			t = append(t, s)
+		case '$':
+			// ok what is next?
+			r, _, err = p.readRune()
+			if err != nil {
+				if err == io.EOF {
+					buf.WriteByte('$')
+					s := stringElement{value: buf.String(), filename: p.filename, line: line, col: col}
+					t = append(t, s)
+					return t, nil
+				}
+				return nil, err
+			}
+			switch r {
+			case '\'':
+				// https://www.gnu.org/software/bash/manual/html_node/ANSI_002dC-Quoting.html
+				// ANSI-C Quoting
+				v, err := p.readSingleQuote(line, col)
+				if err != nil {
+					return nil, err
+				}
+				v.value, _ = handleEscapes(v.value)
+				t = append(t, v)
+			default:
+				// TODO
+			}
 		}
 	}
 }

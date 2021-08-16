@@ -1,6 +1,9 @@
 package gsh
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 type Context struct {
 	context.Context
@@ -12,4 +15,8 @@ func getCtx(ctx context.Context) *Context {
 		return v
 	}
 	return nil
+}
+
+func ctxOut(ctx *Context) io.Writer {
+	return ctx.Session.Stdout
 }

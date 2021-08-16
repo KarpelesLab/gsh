@@ -8,7 +8,7 @@ import (
 
 func TestTokens(t *testing.T) {
 	sess := New()
-	p := sess.newParser(strings.NewReader("echo 'This is a\ntoken' and a few more\necho cmd2 ; echo cmd3"), "(test)")
+	p := sess.newParser(strings.NewReader("echo $'This is a\\ntoken' and a few more\necho cmd2 ; echo cmd3"), "(test)")
 
 	expect := []string{
 		"echo|This is a\ntoken|and|a|few|more",

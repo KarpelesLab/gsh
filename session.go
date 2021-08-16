@@ -10,11 +10,17 @@ import (
 
 type Session struct {
 	Location
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 func New() *Session {
 	return &Session{
 		Location: ProcLocation(),
+		Stdin:    os.Stdin,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
 	}
 }
 
