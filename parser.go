@@ -56,6 +56,13 @@ func (b *pbuffer) value() stringElement {
 	return v
 }
 
+func (b *pbuffer) app(t *Token) {
+	if b.Len() == 0 {
+		return
+	}
+	*t = append(*t, b.value())
+}
+
 func (p *parser) readCommand() (*command, error) {
 	cmd := &command{}
 
@@ -78,7 +85,9 @@ func (p *parser) readCommand() (*command, error) {
 				// append if the end element was not alone, but skip end element
 				cmd.tokens = append(cmd.tokens, tok[:len(tok)-1])
 			}
-			return cmd, nil
+			if len(cmd.tokens) > 0 {
+				return cmd, nil
+			}
 		default:
 			cmd.tokens = append(cmd.tokens, tok)
 		}
@@ -211,12 +220,14 @@ func (p *parser) readDoubleQuote() (Token, error) {
 
 		switch r {
 		case '$':
+			buf.app(&t)
 			v, err := p.readVarCall()
 			if err != nil {
 				return nil, err
 			}
 			t = append(t, v)
 		case '`':
+			buf.app(&t)
 			v, err := p.readBacktickCall()
 			if err != nil {
 				return nil, err
@@ -247,7 +258,10 @@ func (p *parser) readDoubleQuote() (Token, error) {
 			}
 		case '"':
 			// end of string
-
+			buf.app(&t)
+			return t, nil
+		default:
+			buf.WriteRune(r)
 		}
 	}
 }
