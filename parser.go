@@ -3,17 +3,23 @@ package gsh
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"io"
 	"log"
 )
 
 type parser struct {
 	session   *Session
-	buf       bytes.Buffer
 	mode      []int
 	filename  string
 	line, col int
 	bio       *bufio.Reader
+}
+
+type pbuffer struct {
+	bytes.Buffer
+	p         *parser
+	line, col int
 }
 
 func runScript(ctx *Context, r io.Reader, filename string) error {
@@ -33,6 +39,21 @@ func (p *parser) run() error {
 		return nil // XXX
 	}
 	return nil
+}
+
+func (p *parser) buf() *pbuffer {
+	return &pbuffer{p: p, line: p.line, col: p.col}
+}
+
+func (b *pbuffer) reset() {
+	b.line, b.col = b.p.line, b.p.col
+	b.Buffer.Reset()
+}
+
+func (b *pbuffer) value() stringElement {
+	v := stringElement{value: b.String(), filename: b.p.filename, line: b.line, col: b.col}
+	b.reset()
+	return v
 }
 
 func (p *parser) readCommand() (*command, error) {
@@ -66,16 +87,14 @@ func (p *parser) readCommand() (*command, error) {
 
 func (p *parser) readToken() (Token, error) {
 	t := Token{}
-	buf := &bytes.Buffer{}
-	line, col := p.line, p.col
+	buf := p.buf()
 
 	for {
 		r, _, err := p.readRune()
 		if err != nil {
 			if err == io.EOF {
 				if buf.Len() > 0 {
-					s := stringElement{value: buf.String(), filename: p.filename, line: line, col: col}
-					t = append(t, s)
+					t = append(t, buf.value())
 				}
 				if len(t) > 0 {
 					return t, nil
@@ -92,11 +111,7 @@ func (p *parser) readToken() (Token, error) {
 
 		if buf.Len() > 0 {
 			// flush buf if not empty
-			s := stringElement{value: buf.String(), filename: p.filename, line: line, col: col}
-			t = append(t, s)
-			// reset
-			buf = &bytes.Buffer{}
-			line, col = p.line, p.col
+			t = append(t, buf.value())
 		}
 
 		switch r {
@@ -105,7 +120,7 @@ func (p *parser) readToken() (Token, error) {
 				return t, nil
 			}
 			// haven't reached start of token yet, keep reading (and set line, col forward)
-			line, col = p.line, p.col
+			buf.reset()
 		case '\n':
 			t = append(t, newlineElement{})
 			return t, nil
@@ -135,59 +150,142 @@ func (p *parser) readToken() (Token, error) {
 				buf.WriteRune(r)
 			}
 		case '\'':
-			s, err := p.readSingleQuote(line, col)
+			err := p.readSingleQuote(buf)
 			if err != nil {
 				return nil, err
 			}
-			t = append(t, s)
+			t = append(t, buf.value())
+		case '"':
+			s, err := p.readDoubleQuote()
+			if err != nil {
+				return nil, err
+			}
+			t = append(t, s...)
 		case '$':
 			// ok what is next?
-			r, _, err = p.readRune()
+			e, err := p.readVarCall()
 			if err != nil {
-				if err == io.EOF {
+				if err == io.ErrUnexpectedEOF {
 					buf.WriteByte('$')
-					s := stringElement{value: buf.String(), filename: p.filename, line: line, col: col}
-					t = append(t, s)
+					t = append(t, buf.value())
 					return t, nil
 				}
 				return nil, err
 			}
-			switch r {
-			case '\'':
-				// https://www.gnu.org/software/bash/manual/html_node/ANSI_002dC-Quoting.html
-				// ANSI-C Quoting
-				v, err := p.readSingleQuote(line, col)
-				if err != nil {
-					return nil, err
-				}
-				v.value, _ = handleEscapes(v.value)
-				t = append(t, v)
-			default:
-				// TODO
-			}
+			t = append(t, e)
 		}
 	}
 }
 
-func (p *parser) readSingleQuote(line, col int) (stringElement, error) {
+func (p *parser) readSingleQuote(buf *pbuffer) error {
 	// https://www.gnu.org/software/bash/manual/html_node/Single-Quotes.html
 	// in single quotes, everything until the next singlequote is part of the string
-	buf := &bytes.Buffer{}
+
 	for {
 		b, err := p.readByte()
 		if err != nil {
 			if err == io.EOF {
-				return stringElement{}, io.ErrUnexpectedEOF
+				return io.ErrUnexpectedEOF
 			}
-			return stringElement{}, err
+			return err
 		}
 		if b != '\'' {
 			buf.WriteByte(b)
 			continue
 		}
 		// end of string
-		return stringElement{value: buf.String(), filename: p.filename, line: line, col: col}, nil
+		return nil
 	}
+}
+
+func (p *parser) readDoubleQuote() (Token, error) {
+	// https://www.gnu.org/software/bash/manual/html_node/Double-Quotes.html
+	var t Token
+	buf := p.buf()
+
+	for {
+		r, _, err := p.readRune()
+		if err != nil {
+			return nil, notEOF(err)
+		}
+
+		switch r {
+		case '$':
+			v, err := p.readVarCall()
+			if err != nil {
+				return nil, err
+			}
+			t = append(t, v)
+		case '`':
+			v, err := p.readBacktickCall()
+			if err != nil {
+				return nil, err
+			}
+			t = append(t, v)
+		case '\\':
+			// The backslash retains its special meaning only when followed by one of the following characters: ‘$’, ‘`’, ‘"’, ‘\’, or newline
+			r, _, err = p.readRune()
+			if err != nil {
+				return nil, notEOF(err)
+			}
+			if r == '\r' {
+				r, _, err = p.readRune()
+				if err != nil {
+					return nil, notEOF(err)
+				}
+			}
+
+			switch r {
+			case '$', '`', '"':
+				buf.WriteRune(r)
+			case '\n':
+				// do nothing
+			default:
+				// no effect
+				buf.WriteRune('\\')
+				buf.WriteRune(r)
+			}
+		case '"':
+			// end of string
+
+		}
+	}
+}
+
+func (p *parser) readVarCall() (Element, error) {
+	// this can be a lot of things...
+	// $VAR → *varElement
+	// ${VAR...} → *varElement
+	// $(cmd) → *shellCallElement
+	// $'something' (ANSI-C quoting) → stringElement
+	// $"something" (gettext) → ...
+
+	buf := p.buf()
+
+	r, _, err := p.readRune()
+	if err != nil {
+		return nil, notEOF(err)
+	}
+
+	switch r {
+	case '\'':
+		// https://www.gnu.org/software/bash/manual/html_node/ANSI_002dC-Quoting.html
+		// ANSI-C Quoting
+		err := p.readSingleQuote(buf)
+		if err != nil {
+			return nil, err
+		}
+		v := buf.value()
+		v.value, _ = handleEscapes(v.value)
+		return v, nil
+	default:
+		// TODO
+	}
+	return nil, errors.New("TODO")
+}
+
+func (p *parser) readBacktickCall() (*shellCallElement, error) {
+	return nil, errors.New("TODO")
 }
 
 func (p *parser) readByte() (byte, error) {
