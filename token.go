@@ -51,22 +51,12 @@ func (v *shellCallElement) ToSource() string {
 	return "$(" + strings.Join(v.cmd, " ") + ")"
 }
 
-type newlineElement struct{}
+type escapeElement string
 
-func (newlineElement) Resolve(ctx *Context) (string, error) {
+func (escapeElement) Resolve(ctx *Context) (string, error) {
 	return "", nil
 }
 
-func (newlineElement) ToSource() string {
-	return "\n"
-}
-
-type semicolonElement struct{}
-
-func (semicolonElement) Resolve(ctx *Context) (string, error) {
-	return "", nil
-}
-
-func (semicolonElement) ToSource() string {
-	return ";"
+func (e escapeElement) ToSource() string {
+	return string(e)
 }

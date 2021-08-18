@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"strconv"
+	"unicode/utf8"
 )
 
 type parser struct {
@@ -28,14 +31,14 @@ func runScript(ctx *Context, r io.Reader, filename string) error {
 
 func (p *parser) run() error {
 	for {
-		tok, err := p.readToken()
+		cmd, err := p.readCommand()
 		if err != nil {
 			if err == io.EOF {
 				return nil
 			}
 			return err
 		}
-		log.Printf("tok = %+v", tok)
+		log.Printf("tok = %+v len=%d", cmd.tokens, len(cmd.tokens))
 		return nil // XXX
 	}
 	return nil
@@ -67,7 +70,7 @@ func (p *parser) readCommand() (*command, error) {
 	cmd := &command{}
 
 	for {
-		tok, err := p.readToken()
+		tok, err := p.readToken(";\n")
 		if err != nil {
 			if err == io.EOF {
 				if len(cmd.tokens) > 0 {
@@ -80,8 +83,9 @@ func (p *parser) readCommand() (*command, error) {
 			continue
 		}
 		switch tok[len(tok)-1].(type) {
-		case newlineElement, semicolonElement:
+		case escapeElement:
 			if len(tok) > 1 {
+				log.Printf("got escape in %+v", tok)
 				// append if the end element was not alone, but skip end element
 				cmd.tokens = append(cmd.tokens, tok[:len(tok)-1])
 			}
@@ -94,9 +98,13 @@ func (p *parser) readCommand() (*command, error) {
 	}
 }
 
-func (p *parser) readToken() (Token, error) {
+func (p *parser) readToken(escape string) (Token, error) {
 	t := Token{}
 	buf := p.buf()
+	escapeAs, ok := makeASCIISet(escape)
+	if !ok {
+		return nil, errors.New("invalid escape char requested")
+	}
 
 	for {
 		r, _, err := p.readRune()
@@ -120,22 +128,21 @@ func (p *parser) readToken() (Token, error) {
 
 		if buf.Len() > 0 {
 			// flush buf if not empty
-			t = append(t, buf.value())
+			buf.app(&t)
+		}
+
+		if r < utf8.RuneSelf && escapeAs.contains(byte(r)) {
+			t = append(t, escapeElement(strconv.QuoteRune(r)))
+			return t, nil
 		}
 
 		switch r {
-		case ' ', '\t', '\r':
+		case ' ', '\t', '\r', '\n', ';':
 			if len(t) > 0 {
 				return t, nil
 			}
 			// haven't reached start of token yet, keep reading (and set line, col forward)
 			buf.reset()
-		case '\n':
-			t = append(t, newlineElement{})
-			return t, nil
-		case ';':
-			t = append(t, semicolonElement{})
-			return t, nil
 		case '\\':
 			// https://www.gnu.org/software/bash/manual/html_node/Escape-Character.html
 			// It preserves the literal value of the next character that follows, with the exception of newline
@@ -182,6 +189,26 @@ func (p *parser) readToken() (Token, error) {
 				return nil, err
 			}
 			t = append(t, e)
+		case '#':
+			// comment
+			err := p.skipLine()
+			if err != nil {
+				if err == io.EOF {
+					return t, nil
+				}
+				return nil, err
+			}
+			if len(t) > 0 {
+				return t, nil
+			}
+		case '(':
+			if len(t) == 0 {
+				// a single ( acts like a { when not preceded by a function name
+			}
+			// stringElement
+			// function declaration (needs something before)
+			log.Printf("v = %+v", t)
+			panic(fmt.Sprintf("hi"))
 		}
 	}
 }
@@ -309,7 +336,7 @@ func (p *parser) readByte() (byte, error) {
 	}
 	if b == '\n' {
 		p.line += 1
-		p.col = 0
+		p.col = 1
 	} else {
 		p.col += 1
 	}
@@ -323,9 +350,20 @@ func (p *parser) readRune() (rune, int, error) {
 	}
 	if r == '\n' {
 		p.line += 1
-		p.col = 0
+		p.col = 1
 	} else {
 		p.col += 1
 	}
 	return r, l, nil
+}
+
+func (p *parser) skipLine() error {
+	// read to EOL
+	_, err := p.bio.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	p.line += 1
+	p.col = 1
+	return nil
 }

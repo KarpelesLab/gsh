@@ -2,7 +2,6 @@ package gsh
 
 import (
 	"bytes"
-	"log"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -86,7 +85,6 @@ func handleEscapes(arg string) (string, bool) {
 			case '0':
 				// read 3 more chars from arg
 				ln := findLen(arg, "01234567", 3)
-				log.Printf("ln = %d", ln)
 				if ln == 0 {
 					fail = true
 					break
