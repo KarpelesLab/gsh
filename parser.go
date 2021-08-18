@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"strconv"
 	"unicode/utf8"
 )
 
@@ -85,7 +84,6 @@ func (p *parser) readCommand() (*command, error) {
 		switch tok[len(tok)-1].(type) {
 		case escapeElement:
 			if len(tok) > 1 {
-				log.Printf("got escape in %+v", tok)
 				// append if the end element was not alone, but skip end element
 				cmd.tokens = append(cmd.tokens, tok[:len(tok)-1])
 			}
@@ -132,7 +130,7 @@ func (p *parser) readToken(escape string) (Token, error) {
 		}
 
 		if r < utf8.RuneSelf && escapeAs.contains(byte(r)) {
-			t = append(t, escapeElement(strconv.QuoteRune(r)))
+			t = append(t, escapeElement(string([]rune{r})))
 			return t, nil
 		}
 
