@@ -24,13 +24,15 @@ type pbuffer struct {
 	line, col int
 }
 
+const DefaultEscape = ";\n"
+
 func runScript(ctx *Context, r io.Reader, filename string) error {
 	return ctx.Session.newParser(r, filename).run()
 }
 
 func (p *parser) run() error {
 	for {
-		cmd, err := p.readCommand()
+		cmd, _, err := p.readCommand(DefaultEscape)
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -65,30 +67,37 @@ func (b *pbuffer) app(t *Token) {
 	*t = append(*t, b.value())
 }
 
-func (p *parser) readCommand() (*command, error) {
+func (p *parser) readCommand(escape string) (*command, escapeElement, error) {
 	cmd := &command{}
 
 	for {
-		tok, err := p.readToken(";\n")
+		tok, err := p.readToken(escape)
 		if err != nil {
 			if err == io.EOF {
 				if len(cmd.tokens) > 0 {
-					return cmd, nil
+					return cmd, "", nil
 				}
 			}
-			return nil, err
+			return nil, "", err
 		}
 		if len(tok) == 0 {
 			continue
 		}
-		switch tok[len(tok)-1].(type) {
+		switch esc := tok[len(tok)-1].(type) {
 		case escapeElement:
 			if len(tok) > 1 {
 				// append if the end element was not alone, but skip end element
 				cmd.tokens = append(cmd.tokens, tok[:len(tok)-1])
 			}
-			if len(cmd.tokens) > 0 {
-				return cmd, nil
+			// so which end element did we get?
+			switch esc {
+			case "|":
+				// TODO pipe
+				panic("TODO handle pipe")
+			default:
+				if len(cmd.tokens) > 0 {
+					return cmd, esc, nil
+				}
 			}
 		default:
 			cmd.tokens = append(cmd.tokens, tok)
@@ -135,12 +144,31 @@ func (p *parser) readToken(escape string) (Token, error) {
 		}
 
 		switch r {
-		case ' ', '\t', '\r', '\n', ';':
+		case ' ', '\t', '\r':
 			if len(t) > 0 {
 				return t, nil
 			}
 			// haven't reached start of token yet, keep reading (and set line, col forward)
 			buf.reset()
+		case '\n', ';':
+			t = append(t, escapeElement(string([]rune{r})))
+			return t, nil
+		case '|':
+			if len(t) == 0 {
+				return nil, fmt.Errorf("%w `|`", ErrSyntaxUnexpectedToken)
+			}
+			v, err := p.bio.Peek(1)
+			if err != nil || len(v) == 0 {
+				// failed, at least return this one
+				t = append(t, escapeElement("|"))
+				return t, nil
+			}
+			if v[1] == '|' {
+				t = append(t, escapeElement("||"))
+				return t, nil
+			}
+			t = append(t, escapeElement("|"))
+			return t, nil
 		case '\\':
 			// https://www.gnu.org/software/bash/manual/html_node/Escape-Character.html
 			// It preserves the literal value of the next character that follows, with the exception of newline

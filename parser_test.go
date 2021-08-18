@@ -26,7 +26,7 @@ echo "Hello, "$'v = \033 \u24e'`
 	}
 
 	for {
-		cmd, err := p.readCommand()
+		cmd, _, err := p.readCommand(DefaultEscape)
 
 		if err != nil {
 			if err == io.EOF {

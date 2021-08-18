@@ -1,6 +1,9 @@
 package gsh
 
-import "strings"
+import (
+	"bytes"
+	"strings"
+)
 
 type Token []Element
 
@@ -59,4 +62,19 @@ func (escapeElement) Resolve(ctx *Context) (string, error) {
 
 func (e escapeElement) ToSource() string {
 	return string(e)
+}
+
+type cmdsElement []command
+
+func (c cmdsElement) Resolve(ctx *Context) (string, error) {
+	return "", nil
+}
+
+func (cs cmdsElement) ToSource() string {
+	res := &bytes.Buffer{}
+	for _, c := range cs {
+		res.WriteString(c.ToSource())
+		res.WriteByte('\n')
+	}
+	return res.String()
 }
